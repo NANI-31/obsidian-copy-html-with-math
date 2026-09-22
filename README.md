@@ -14,8 +14,6 @@ Standard copy plugins and Obsidian's default copy leave math formulas inside `$.
 * **HTML + MathML (KaTeX)**: Full visual HTML equation rendering with MathML fallback for web browsers, **Gmail**, **Notion**, **Anki**, and blogs.
 * **Direct MathML Copy**: Select any equation and copy directly as pure MathML code.
 
-<!-- SCREENSHOT PLACEHOLDER 1: MATH COPY DEMO -->
-<!-- Add screenshot showing markdown with math in Obsidian and the formatted equation in Word/Google Docs -->
 ![Math Copying Demo](docs/images/math-demo.png)
 
 ---
@@ -47,8 +45,6 @@ This plugin intercepts `Ctrl + V` and automatically:
 * ✅ **Code blocks with syntax highlighting**
 * ✅ **Obsidian Dataview & Tasks**
 
-<!-- SCREENSHOT PLACEHOLDER 2: SETTINGS TAB -->
-<!-- Add screenshot showing the plugin's settings tab, especially the Math formula handling dropdown -->
 ![Plugin Settings](docs/images/settings.png)
 
 ---

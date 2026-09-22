@@ -23,3 +23,11 @@
 	width: 100%;
 	height: 15em;
 }
+
+.copy-as-html-hidden {
+	display: none !important;
+}
+
+.copy-as-html-progress {
+	width: 100%;
+}

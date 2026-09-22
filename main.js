@@ -29,7 +29,7 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
 
-// node_modules/katex/dist/katex.mjs
+// node_modules/.pnpm/katex@0.18.7/node_modules/katex/dist/katex.mjs
 var ParseError = class extends Error {
   constructor(message, token) {
     var error = "KaTeX parse error: " + message;
@@ -13423,15 +13423,17 @@ function allWithProgress(promises, callback) {
   let count = 0;
   callback(0);
   for (const promise of promises) {
-    promise.then(() => {
+    void promise.then(() => {
       count++;
       callback(count * 100 / promises.length);
+    }).catch(() => {
+      count++;
     });
   }
   return Promise.all(promises);
 }
 async function delay(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 var DEFAULT_STYLESHEET = `body,input {
   font-family: "Roboto","Helvetica Neue",Helvetica,Arial,sans-serif
@@ -13708,8 +13710,7 @@ var DocumentRenderer = class {
     if (this.options.mathHandling !== "as-is" /* AS_IS */) {
       processedMarkdown = this.tokenizeMath(processedMarkdown);
     }
-    const wrapper = document.createElement("div");
-    wrapper.style.display = "hidden";
+    const wrapper = createDiv({ cls: "copy-as-html-hidden" });
     document.body.appendChild(wrapper);
     await import_obsidian.MarkdownRenderer.render(this.app, processedMarkdown, wrapper, path2, this.view);
     await this.untilRendered();
@@ -13735,13 +13736,16 @@ var DocumentRenderer = class {
       }
       try {
         if (((_b = component == null ? void 0 : component.constructor) == null ? void 0 : _b.name) === "SheetElement") {
-          await component.onload();
+          const sheet = component;
+          if (typeof sheet.onload === "function") {
+            await sheet.onload();
+          }
         }
       } catch (error) {
         console.error(`Error calling onload()`, error);
       }
     };
-    await loadChildren(internalView);
+    await loadChildren(view);
   }
   preprocessMarkdown(markdown) {
     let processed = markdown;
@@ -13803,45 +13807,42 @@ var DocumentRenderer = class {
     if (this.options.internalLinkHandling === 3 /* LEAVE_AS_IS */) {
       return;
     }
-    node.querySelectorAll(`a.${className}`).forEach((node2) => {
+    node.querySelectorAll(`a.${className}`).forEach((linkEl) => {
+      var _a;
+      const href = (_a = linkEl.getAttribute("href")) != null ? _a : "";
+      const text2 = linkEl.getText();
       switch (this.options.internalLinkHandling) {
         case 1 /* CONVERT_TO_OBSIDIAN_URI */:
           {
-            const linkNode = node2.parentNode.createEl("a");
-            linkNode.innerText = node2.getText();
+            let uri = "";
             if (className === "tag") {
-              linkNode.href = this.vaultSearchUri + "&query=tag:" + encodeURIComponent(node2.getAttribute("href"));
+              uri = this.vaultSearchUri + "&query=tag:" + encodeURIComponent(href);
             } else {
-              if (node2.getAttribute("href").startsWith("#")) {
-                linkNode.href = node2.getAttribute("href");
+              if (href.startsWith("#")) {
+                uri = href;
               } else {
-                linkNode.href = this.vaultOpenUri + "&file=" + encodeURIComponent(node2.getAttribute("href"));
+                uri = this.vaultOpenUri + "&file=" + encodeURIComponent(href);
               }
             }
-            linkNode.className = className;
-            node2.parentNode.replaceChild(linkNode, node2);
+            const linkNode = createEl("a", { text: text2, cls: className, href: uri });
+            linkEl.replaceWith(linkNode);
           }
           break;
         case 2 /* LINK_TO_HTML */:
           {
-            const linkNode = node2.parentNode.createEl("a");
-            linkNode.innerText = node2.getAttribute("href");
-            linkNode.className = className;
-            if (node2.getAttribute("href").startsWith("#")) {
-              linkNode.href = node2.getAttribute("href");
-            } else {
-              linkNode.href = node2.getAttribute("href").replace(/^(.*?)(?:\.md)?(#.*?)?$/, "$1.html$2");
+            let htmlHref = href;
+            if (!href.startsWith("#")) {
+              htmlHref = href.replace(/^(.*?)(?:\.md)?(#.*?)?$/, "$1.html$2");
             }
-            node2.parentNode.replaceChild(linkNode, node2);
+            const linkNode = createEl("a", { text: href, cls: className, href: htmlHref });
+            linkEl.replaceWith(linkNode);
           }
           break;
         case 0 /* CONVERT_TO_TEXT */:
         default:
           {
-            const textNode = node2.parentNode.createEl("span");
-            textNode.innerText = node2.getText();
-            textNode.className = className;
-            node2.parentNode.replaceChild(textNode, node2);
+            const textNode = createEl("span", { text: text2, cls: className });
+            linkEl.replaceWith(textNode);
           }
           break;
       }
@@ -13860,38 +13861,46 @@ var DocumentRenderer = class {
     node.querySelectorAll(".snw-reference").forEach((node2) => node2.remove());
   }
   transformCodeToTables(node) {
-    node.querySelectorAll("pre").forEach((node2) => {
-      const codeEl = node2.querySelector("code");
-      const code = (codeEl ? codeEl.innerHTML : node2.innerHTML).replace(/\n*$/, "");
-      const table = node2.parentElement.createEl("table");
-      table.className = "source-table";
+    node.querySelectorAll("pre").forEach((preEl) => {
+      var _a;
+      const table = createEl("table", { cls: "source-table" });
       const bg = this.options.codeBlockBackground ? "#f5f5f5" : "transparent";
-      table.style.backgroundColor = bg;
-      table.innerHTML = `<tr><td style="background-color: ${bg};"><pre style="background-color: transparent;">${code}</pre></td></tr>`;
-      node2.parentElement.replaceChild(table, node2);
+      table.setCssStyles({ backgroundColor: bg });
+      const tr = table.createEl("tr");
+      const td = tr.createEl("td");
+      td.setCssStyles({ backgroundColor: bg });
+      const newPre = td.createEl("pre");
+      newPre.setCssStyles({ backgroundColor: "transparent" });
+      const sourceEl = (_a = preEl.querySelector("code")) != null ? _a : preEl;
+      while (sourceEl.firstChild) {
+        newPre.appendChild(sourceEl.firstChild);
+      }
+      preEl.replaceWith(table);
     });
   }
   transformCalloutsToTables(node) {
-    node.querySelectorAll(".callout").forEach((node2) => {
+    node.querySelectorAll(".callout").forEach((calloutEl) => {
       var _a;
-      const callout = node2.parentElement.createEl("table");
-      callout.addClass("callout-table", "callout");
-      callout.setAttribute("data-callout", (_a = node2.getAttribute("data-callout")) != null ? _a : "quote");
+      const callout = createEl("table", { cls: "callout-table callout" });
+      callout.setAttribute("data-callout", (_a = calloutEl.getAttribute("data-callout")) != null ? _a : "quote");
       const headRow = callout.createEl("tr");
-      const headColumn = headRow.createEl("td");
-      headColumn.addClass("callout-title");
-      const title = node2.querySelector(".callout-title-inner");
+      const headColumn = headRow.createEl("td", { cls: "callout-title" });
+      const title = calloutEl.querySelector(".callout-title-inner");
       if (title) {
         const span = headColumn.createEl("span");
-        span.innerHTML = title.innerHTML;
+        while (title.firstChild) {
+          span.appendChild(title.firstChild);
+        }
       }
-      const originalContent = node2.querySelector(".callout-content");
+      const originalContent = calloutEl.querySelector(".callout-content");
       if (originalContent) {
         const row = callout.createEl("tr");
         const column = row.createEl("td");
-        column.innerHTML = originalContent.innerHTML;
+        while (originalContent.firstChild) {
+          column.appendChild(originalContent.firstChild);
+        }
       }
-      node2.replaceWith(callout);
+      calloutEl.replaceWith(callout);
     });
   }
   removeAllFootnotes(node) {
@@ -13943,15 +13952,18 @@ var DocumentRenderer = class {
     }
     const promises = [];
     const replaceSvg = async (svg) => {
-      const style = svg.querySelector("style") || svg.appendChild(document.createElement("style"));
-      style.innerHTML += MERMAID_STYLESHEET;
-      const svgAsString = xmlSerializer.serializeToString(svg);
+      let svgAsString = xmlSerializer.serializeToString(svg);
+      if (MERMAID_STYLESHEET && !svgAsString.includes("<style")) {
+        svgAsString = svgAsString.replace(/<svg([^>]*)>/, `<svg$1><style>${MERMAID_STYLESHEET}</style>`);
+      }
       const svgData2 = `data:image/svg+xml;base64,` + Buffer.from(svgAsString).toString("base64");
       const dataUri = await this.imageToDataUri(svgData2);
-      const img = svg.createEl("img");
-      img.style.cssText = svg.style.cssText;
+      const img = createEl("img");
+      if (svg.getAttribute("style")) {
+        img.setAttribute("style", svg.getAttribute("style") || "");
+      }
       img.src = dataUri;
-      svg.parentElement.replaceChild(img, svg);
+      svg.replaceWith(img);
     };
     node.querySelectorAll("svg").forEach((svg) => {
       if (svg.closest(".katex, .math, math, .math-block")) {
@@ -13980,7 +13992,7 @@ var DocumentRenderer = class {
     }
   }
   async imageToDataUri(url) {
-    const canvas = document.createElement("canvas");
+    const canvas = createEl("canvas");
     const ctx = canvas.getContext("2d");
     const image = new Image();
     image.setAttribute("crossOrigin", "anonymous");
@@ -13988,18 +14000,16 @@ var DocumentRenderer = class {
       image.onload = () => {
         canvas.width = image.naturalWidth;
         canvas.height = image.naturalHeight;
-        ctx.drawImage(image, 0, 0);
+        ctx == null ? void 0 : ctx.drawImage(image, 0, 0);
         try {
           const uri = canvas.toDataURL("image/png");
           resolve(uri);
-        } catch (err) {
-          console.log(`failed ${url}`, err);
+        } catch (e) {
           resolve(url);
         }
         canvas.remove();
       };
-      image.onerror = (err) => {
-        console.log("could not load data uri");
+      image.onerror = () => {
         resolve(url);
       };
     });
@@ -14007,8 +14017,11 @@ var DocumentRenderer = class {
     return dataUriPromise;
   }
   async readFromVault(path2, mimeType) {
-    const tfile = this.app.vault.getAbstractFileByPath(path2);
-    const data = await this.app.vault.readBinary(tfile);
+    const file = this.app.vault.getAbstractFileByPath(path2);
+    if (!(file instanceof import_obsidian.TFile)) {
+      return "";
+    }
+    const data = await this.app.vault.readBinary(file);
     return `data:${mimeType};base64,` + (0, import_obsidian.arrayBufferToBase64)(data);
   }
   guessMimeType(filePath) {
@@ -14043,7 +14056,7 @@ var DocumentRenderer = class {
 
 `;
     });
-    text2 = text2.replace(/(?<![\w\\])\$(?!\s)([^\$\n]+?)(?<!\s)\$(?![0-9a-zA-Z])/g, (match, texContent) => {
+    text2 = text2.replace(/(?<![\w\\])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![0-9a-zA-Z])/g, (match, texContent) => {
       const trimmed = texContent.trim();
       if (/^[\d,.]+(\s*(million|billion|thousand|k|m|usd|eur|gbp|inr))?$/i.test(trimmed)) {
         return match;
@@ -14063,6 +14076,14 @@ var DocumentRenderer = class {
     }
     return text2;
   }
+  replaceElementWithHtml(target, htmlString) {
+    const doc = new DOMParser().parseFromString(htmlString, "text/html");
+    const frag = document.createDocumentFragment();
+    while (doc.body.firstChild) {
+      frag.appendChild(doc.body.firstChild);
+    }
+    target.replaceWith(frag);
+  }
   renderMathElements(node) {
     node.querySelectorAll(".copy-math-placeholder").forEach((placeholder) => {
       const id = placeholder.getAttribute("data-math-id");
@@ -14071,9 +14092,9 @@ var DocumentRenderer = class {
         const rendered = this.renderMathFormula(item.tex, item.isBlock);
         const parent = placeholder.parentElement;
         if (item.isBlock && parent && parent.tagName === "P" && parent.childNodes.length === 1) {
-          parent.outerHTML = rendered;
+          this.replaceElementWithHtml(parent, rendered);
         } else {
-          placeholder.outerHTML = rendered;
+          this.replaceElementWithHtml(placeholder, rendered);
         }
       }
     });
@@ -14085,7 +14106,7 @@ var DocumentRenderer = class {
       if (rawTex && rawTex.trim()) {
         const isBlock = el.classList.contains("math-block");
         const rendered = this.renderMathFormula(rawTex.trim(), isBlock);
-        el.outerHTML = rendered;
+        this.replaceElementWithHtml(el, rendered);
       }
     });
   }
@@ -14132,15 +14153,14 @@ var CopyingToHtmlModal = class extends import_obsidian.Modal {
   onOpen() {
     const { titleEl, contentEl } = this;
     titleEl.setText("Copying to clipboard");
-    this._progress = contentEl.createEl("progress");
-    this._progress.style.width = "100%";
+    this._progress = contentEl.createEl("progress", { cls: "copy-as-html-progress" });
   }
   onClose() {
     const { contentEl } = this;
     contentEl.empty();
   }
 };
-var _CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSettingTab {
+var CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -14149,8 +14169,8 @@ var _CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSetting
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Copy document as HTML Settings" });
-    containerEl.createEl("h3", { text: "Compatibility" });
+    new import_obsidian.Setting(containerEl).setName("Copy document as HTML Settings").setHeading();
+    new import_obsidian.Setting(containerEl).setName("Compatibility").setHeading();
     new import_obsidian.Setting(containerEl).setName("Convert SVG files to bitmap").setDesc("If checked, SVG files are converted to bitmap. This makes the copied documents heavier but improves compatibility (eg. with gmail).").addToggle((toggle) => toggle.setValue(this.plugin.settings.convertSvgToBitmap).onChange(async (value) => {
       this.plugin.settings.convertSvgToBitmap = value;
       await this.plugin.saveSettings();
@@ -14175,14 +14195,20 @@ var _CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSetting
       this.plugin.settings.cleanPastedMath = value;
       await this.plugin.saveSettings();
     }));
-    containerEl.createEl("h3", { text: "Rendering" });
-    new import_obsidian.Setting(containerEl).setName("Math formula handling").setDesc(_CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-				This option controls how math formulas ($...$ and $$...$$) are rendered when copied:
-				<ul>
-				  <li><b>MathML (Recommended)</b>: Render as MathML (&lt;math&gt;). Pastes into Microsoft Word, Google Docs, Apple Pages, and LibreOffice as native, editable equations.</li>
-				  <li><b>HTML + MathML (KaTeX)</b>: Render as styled HTML with embedded MathML. Best for web apps, Notion, Anki, and Gmail.</li>
-				  <li><b>Leave as raw code</b>: Copies raw LaTeX ($...).</li>
-				</ul>`)).addDropdown((dropdown) => dropdown.addOption("mathml" /* MATHML */, "MathML (MS Word, Google Docs, LibreOffice)").addOption("html-mathml" /* HTML_MATHML */, "HTML + MathML (Web, Notion, Anki, Gmail)").addOption("as-is" /* AS_IS */, "Leave as raw code ($...)").setValue(this.plugin.settings.mathHandling).onChange(async (value) => {
+    new import_obsidian.Setting(containerEl).setName("Rendering").setHeading();
+    new import_obsidian.Setting(containerEl).setName("Math formula handling").setDesc(createFragment((frag) => {
+      frag.appendText("This option controls how math formulas ($...$ and $$...$$) are rendered when copied:");
+      const ul = frag.createEl("ul");
+      const li1 = ul.createEl("li");
+      li1.createEl("b", { text: "MathML (Recommended)" });
+      li1.appendText(": Render as MathML (<math>). Pastes into Microsoft Word, Google Docs, Apple Pages, and LibreOffice as native, editable equations.");
+      const li2 = ul.createEl("li");
+      li2.createEl("b", { text: "HTML + MathML (KaTeX)" });
+      li2.appendText(": Render as styled HTML with embedded MathML. Best for web apps, Notion, Anki, and Gmail.");
+      const li3 = ul.createEl("li");
+      li3.createEl("b", { text: "Leave as raw code" });
+      li3.appendText(": Copies raw LaTeX ($...).");
+    })).addDropdown((dropdown) => dropdown.addOption("mathml" /* MATHML */, "MathML (MS Word, Google Docs, LibreOffice)").addOption("html-mathml" /* HTML_MATHML */, "HTML + MathML (Web, Notion, Anki, Gmail)").addOption("as-is" /* AS_IS */, "Leave as raw code ($...)").setValue(this.plugin.settings.mathHandling).onChange(async (value) => {
       this.plugin.settings.mathHandling = value;
       await this.plugin.saveSettings();
     }));
@@ -14198,18 +14224,19 @@ var _CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSetting
       this.plugin.settings.removeFrontMatter = value;
       await this.plugin.saveSettings();
     }));
-    new import_obsidian.Setting(containerEl).setName("Remove dataview metadata lines").setDesc(_CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-				<p>Remove lines that only contain dataview meta-data, eg. "rating:: 9". Metadata between square brackets is left intact.</p>
-				<p>Current limitations are that lines starting with a space are not removed, and lines that look like metadata in code blocks are removed if they don't start with a space</p>`)).addToggle((toggle) => toggle.setValue(this.plugin.settings.removeDataviewMetadataLines).onChange(async (value) => {
+    new import_obsidian.Setting(containerEl).setName("Remove dataview metadata lines").setDesc(createFragment((frag) => {
+      frag.createEl("p", { text: 'Remove lines that only contain dataview meta-data, eg. "rating:: 9". Metadata between square brackets is left intact.' });
+      frag.createEl("p", { text: "Current limitations are that lines starting with a space are not removed, and lines that look like metadata in code blocks are removed if they don't start with a space" });
+    })).addToggle((toggle) => toggle.setValue(this.plugin.settings.removeDataviewMetadataLines).onChange(async (value) => {
       this.plugin.settings.removeDataviewMetadataLines = value;
       await this.plugin.saveSettings();
     }));
-    new import_obsidian.Setting(containerEl).setName("Footnote handling").setDesc(_CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-				<ul>
-				  <li>Remove everything: Remove references and links.</li>
-				  <li>Display only: leave reference and foot-note, but don't display as a link.</li> 
-				  <li>Display and link: attempt to link the reference to the footnote, may not work depending on paste target.</li>
-				</ul>`)).addDropdown((dropdown) => dropdown.addOption(0 /* REMOVE_ALL */.toString(), "Remove everything").addOption(2 /* REMOVE_LINK */.toString(), "Display only").addOption(1 /* LEAVE_LINK */.toString(), "Display and link").setValue(this.plugin.settings.footnoteHandling.toString()).onChange(async (value) => {
+    new import_obsidian.Setting(containerEl).setName("Footnote handling").setDesc(createFragment((frag) => {
+      const ul = frag.createEl("ul");
+      ul.createEl("li", { text: "Remove everything: Remove references and links." });
+      ul.createEl("li", { text: "Display only: leave reference and foot-note, but don't display as a link." });
+      ul.createEl("li", { text: "Display and link: attempt to link the reference to the footnote, may not work depending on paste target." });
+    })).addDropdown((dropdown) => dropdown.addOption(0 /* REMOVE_ALL */.toString(), "Remove everything").addOption(2 /* REMOVE_LINK */.toString(), "Display only").addOption(1 /* LEAVE_LINK */.toString(), "Display and link").setValue(this.plugin.settings.footnoteHandling.toString()).onChange(async (value) => {
       switch (value) {
         case 3 /* TITLE_ATTRIBUTE */.toString():
           this.plugin.settings.footnoteHandling = 3 /* TITLE_ATTRIBUTE */;
@@ -14227,14 +14254,14 @@ var _CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSetting
       }
       await this.plugin.saveSettings();
     }));
-    new import_obsidian.Setting(containerEl).setName("Link handling").setDesc(_CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-				This option controls how links to Obsidian documents and tags are handled.
-				<ul>
-				  <li>Don't link: only render the link title</li>
-				  <li>Open with Obsidian: convert the link to an obsidian:// URI</li> 
-				  <li>Link to HTML: keep the link, but convert the extension to .html</li>
-				  <li>Leave as is: keep the generated link</li>	
-				</ul>`)).addDropdown((dropdown) => dropdown.addOption(0 /* CONVERT_TO_TEXT */.toString(), "Don't link").addOption(1 /* CONVERT_TO_OBSIDIAN_URI */.toString(), "Open with Obsidian").addOption(2 /* LINK_TO_HTML */.toString(), "Link to HTML").addOption(3 /* LEAVE_AS_IS */.toString(), "Leave as is").setValue(this.plugin.settings.internalLinkHandling.toString()).onChange(async (value) => {
+    new import_obsidian.Setting(containerEl).setName("Link handling").setDesc(createFragment((frag) => {
+      frag.appendText("This option controls how links to Obsidian documents and tags are handled.");
+      const ul = frag.createEl("ul");
+      ul.createEl("li", { text: "Don't link: only render the link title" });
+      ul.createEl("li", { text: "Open with Obsidian: convert the link to an obsidian:// URI" });
+      ul.createEl("li", { text: "Link to HTML: keep the link, but convert the extension to .html" });
+      ul.createEl("li", { text: "Leave as is: keep the generated link" });
+    })).addDropdown((dropdown) => dropdown.addOption(0 /* CONVERT_TO_TEXT */.toString(), "Don't link").addOption(1 /* CONVERT_TO_OBSIDIAN_URI */.toString(), "Open with Obsidian").addOption(2 /* LINK_TO_HTML */.toString(), "Link to HTML").addOption(3 /* LEAVE_AS_IS */.toString(), "Leave as is").setValue(this.plugin.settings.internalLinkHandling.toString()).onChange(async (value) => {
       switch (value) {
         case 1 /* CONVERT_TO_OBSIDIAN_URI */.toString():
           this.plugin.settings.internalLinkHandling = 1 /* CONVERT_TO_OBSIDIAN_URI */;
@@ -14252,7 +14279,7 @@ var _CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSetting
       }
       await this.plugin.saveSettings();
     }));
-    containerEl.createEl("h3", { text: "Custom templates (advanced)" });
+    new import_obsidian.Setting(containerEl).setName("Custom templates (advanced)").setHeading();
     const useCustomStylesheetSetting = new import_obsidian.Setting(containerEl).setName("Provide a custom stylesheet").setDesc("The default stylesheet provides minimalistic theming. You may want to customize it for better looks. Disabling this setting will restore the default stylesheet.");
     const customStylesheetSetting = new import_obsidian.Setting(containerEl).setClass("customizable-text-setting").addTextArea((textArea) => textArea.setValue(this.plugin.settings.styleSheet).onChange(async (value) => {
       this.plugin.settings.styleSheet = value;
@@ -14269,17 +14296,28 @@ var _CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSetting
         await this.plugin.saveSettings();
       });
     });
-    const useCustomHtmlTemplateSetting = new import_obsidian.Setting(containerEl).setName("Provide a custom HTML template").setDesc(_CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`For even more customization, you can 
-provide a custom HTML template. Disabling this setting will restore the default template.<br/><br/>
-Note that the template is not used if the "Copy HTML fragment only" setting is enabled.`));
-    const customHtmlTemplateSetting = new import_obsidian.Setting(containerEl).setDesc(_CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-			The template should include the following placeholders :<br/>
-<ul>
-	<li><code>\${title}</code>: the document title</li>
-	<li><code>\${stylesheet}</code>: the CSS stylesheet. The custom stylesheet will be applied if any is specified</li>
-	<li><code>\${MERMAID_STYLESHEET}</code>: the CSS for mermaid diagrams</li>
-	<li><code>\${body}</code>: the document body</li>
-</ul>`)).setClass("customizable-text-setting").addTextArea((textArea) => textArea.setValue(this.plugin.settings.htmlTemplate).onChange(async (value) => {
+    const useCustomHtmlTemplateSetting = new import_obsidian.Setting(containerEl).setName("Provide a custom HTML template").setDesc(createFragment((frag) => {
+      frag.appendText("For even more customization, you can provide a custom HTML template. Disabling this setting will restore the default template.");
+      frag.createEl("br");
+      frag.createEl("br");
+      frag.appendText('Note that the template is not used if the "Copy HTML fragment only" setting is enabled.');
+    }));
+    const customHtmlTemplateSetting = new import_obsidian.Setting(containerEl).setDesc(createFragment((frag) => {
+      frag.appendText("The template should include the following placeholders :");
+      const ul = frag.createEl("ul");
+      const li1 = ul.createEl("li");
+      li1.createEl("code", { text: "${title}" });
+      li1.appendText(": the document title");
+      const li2 = ul.createEl("li");
+      li2.createEl("code", { text: "${stylesheet}" });
+      li2.appendText(": the CSS stylesheet. The custom stylesheet will be applied if any is specified");
+      const li3 = ul.createEl("li");
+      li3.createEl("code", { text: "${MERMAID_STYLESHEET}" });
+      li3.appendText(": the CSS for mermaid diagrams");
+      const li4 = ul.createEl("li");
+      li4.createEl("code", { text: "${body}" });
+      li4.appendText(": the document body");
+    })).setClass("customizable-text-setting").addTextArea((textArea) => textArea.setValue(this.plugin.settings.htmlTemplate).onChange(async (value) => {
       this.plugin.settings.htmlTemplate = value;
       await this.plugin.saveSettings();
     }));
@@ -14294,15 +14332,17 @@ Note that the template is not used if the "Copy HTML fragment only" setting is e
         await this.plugin.saveSettings();
       });
     });
-    containerEl.createEl("h3", { text: "Exotic / Developer options" });
-    new import_obsidian.Setting(containerEl).setName("Don't embed images").setDesc("When this option is enabled, images will not be embedded in the HTML document, but <em>broken</em> links will be left in place. This is not recommended.").addToggle((toggle) => toggle.setValue(this.plugin.settings.disableImageEmbedding).onChange(async (value) => {
+    new import_obsidian.Setting(containerEl).setName("Exotic / Developer options").setHeading();
+    new import_obsidian.Setting(containerEl).setName("Don't embed images").setDesc(createFragment((frag) => {
+      frag.appendText("When this option is enabled, images will not be embedded in the HTML document, but ");
+      frag.createEl("em", { text: "broken" });
+      frag.appendText(" links will be left in place. This is not recommended.");
+    })).addToggle((toggle) => toggle.setValue(this.plugin.settings.disableImageEmbedding).onChange(async (value) => {
       this.plugin.settings.disableImageEmbedding = value;
       await this.plugin.saveSettings();
     }));
   }
 };
-var CopyDocumentAsHTMLSettingsTab = _CopyDocumentAsHTMLSettingsTab;
-CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML = (html) => createFragment((documentFragment) => documentFragment.createDiv().innerHTML = html);
 var DEFAULT_SETTINGS = {
   removeFrontMatter: true,
   convertSvgToBitmap: true,
@@ -14329,17 +14369,23 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
     this.addCommand({
       id: "smart-copy-as-html",
       name: "Copy selection or document to clipboard",
-      checkCallback: this.buildCheckCallback((view) => this.copyFromView(view, view.editor.somethingSelected()))
+      checkCallback: this.buildCheckCallback((view) => {
+        void this.copyFromView(view, view.editor.somethingSelected());
+      })
     });
     this.addCommand({
       id: "copy-as-html",
       name: "Copy entire document to clipboard",
-      checkCallback: this.buildCheckCallback((view) => this.copyFromView(view, false))
+      checkCallback: this.buildCheckCallback((view) => {
+        void this.copyFromView(view, false);
+      })
     });
     this.addCommand({
       id: "copy-selection-as-html",
       name: "Copy current selection to clipboard",
-      checkCallback: this.buildCheckCallback((view) => this.copyFromView(view, true))
+      checkCallback: this.buildCheckCallback((view) => {
+        void this.copyFromView(view, true);
+      })
     });
     this.addCommand({
       id: "copy-selection-as-mathml",
@@ -14367,8 +14413,10 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
               "text/html": new Blob([fullHtml], { type: "text/html" }),
               "text/plain": new Blob([tex], { type: "text/plain" })
             });
-            navigator.clipboard.write([data]).then(() => {
+            void navigator.clipboard.write([data]).then(() => {
               new import_obsidian.Notice("Copied selection to clipboard as MathML");
+            }).catch((err) => {
+              new import_obsidian.Notice(`Failed to copy to clipboard: ${String(err)}`);
             });
           } catch (e) {
             new import_obsidian.Notice(`Failed to convert math: ${e}`);
@@ -14388,6 +14436,8 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
     this.addSettingTab(new CopyDocumentAsHTMLSettingsTab(this.app, this));
     this.setupEditorMenuEntry();
     this.registerEvent(this.app.workspace.on("editor-paste", (evt, editor) => {
+      if (evt.defaultPrevented)
+        return;
       this.handleEditorPaste(evt, editor);
     }));
   }
@@ -14406,12 +14456,10 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
   buildCheckCallback(action) {
     return (checking) => {
       if (copyIsRunning) {
-        console.log("Document is already being copied");
         return false;
       }
       const activeView = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
       if (!activeView) {
-        console.log("Nothing to copy: No active markdown view");
         return false;
       }
       if (!checking) {
@@ -14422,11 +14470,9 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
   }
   async copyFromView(activeView, onlySelected) {
     if (!activeView.editor) {
-      console.error("No editor in active view, nothing to copy");
       return;
     }
     if (!activeView.file) {
-      console.error("No file in active view, nothing to copy");
       return;
     }
     const markdown = onlySelected ? activeView.editor.getSelection() : activeView.data;
@@ -14436,18 +14482,15 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
   }
   async copyFromFile(file) {
     if (!(file instanceof import_obsidian.TFile)) {
-      console.log(`cannot copy folder to HTML: ${file.path}`);
       return;
     }
     if (file.extension.toLowerCase() !== "md") {
-      console.log(`cannot only copy .md files to HTML: ${file.path}`);
       return;
     }
     const markdown = await file.vault.cachedRead(file);
     return this.doCopy(markdown, file.path, file.name, true);
   }
   async doCopy(markdown, path2, name, isFullDocument) {
-    console.log(`Copying "${path2}" to clipboard...`);
     const title = name.replace(/\.md$/i, "");
     const copier = new DocumentRenderer(this.app, this.settings);
     try {
@@ -14456,8 +14499,7 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
       ppIsProcessing = true;
       const htmlBody = await copier.renderDocument(markdown, path2);
       if (this.settings.fileNameAsHeader && isFullDocument) {
-        const h1 = htmlBody.createEl("h1");
-        h1.innerHTML = title;
+        const h1 = createEl("h1", { text: title });
         htmlBody.insertBefore(h1, htmlBody.firstChild);
       }
       const htmlDocument = this.settings.bareHtmlOnly ? htmlBody.outerHTML : this.expandHtmlTemplate(htmlBody.outerHTML, title);
@@ -14470,7 +14512,6 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
         })
       });
       await navigator.clipboard.write([data]);
-      console.log(`Copied to clipboard as HTML`);
       new import_obsidian.Notice(`Copied to clipboard as HTML`);
     } catch (error) {
       new import_obsidian.Notice(`copy failed: ${error}`);

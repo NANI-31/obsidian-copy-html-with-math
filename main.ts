@@ -29,9 +29,11 @@ function allWithProgress(promises: Promise<never>[], callback: (percentCompleted
 	let count = 0;
 	callback(0);
 	for (const promise of promises) {
-		promise.then(() => {
+		void promise.then(() => {
 			count++;
 			callback((count * 100) / promises.length);
+		}).catch(() => {
+			count++;
 		});
 	}
 	return Promise.all(promises);
@@ -41,7 +43,7 @@ function allWithProgress(promises: Promise<never>[], callback: (percentCompleted
  * Do nothing for a while
  */
 async function delay(milliseconds: number): Promise<void> {
-	return new Promise(resolve => setTimeout(resolve, milliseconds));
+	return new Promise(resolve => window.setTimeout(resolve, milliseconds));
 }
 
 /**
@@ -426,7 +428,7 @@ class DocumentRenderer {
 
 		try {
 			const topNode = await this.renderMarkdown(markdown, path);
-			return await this.transformHTML(topNode!);
+			return await this.transformHTML(topNode);
 		} finally {
 			this.modal.close();
 		}
@@ -442,8 +444,7 @@ class DocumentRenderer {
 			processedMarkdown = this.tokenizeMath(processedMarkdown);
 		}
 
-		const wrapper = document.createElement('div');
-		wrapper.style.display = 'hidden';
+		const wrapper = createDiv({ cls: 'copy-as-html-hidden' });
 		document.body.appendChild(wrapper);
 		await MarkdownRenderer.render(this.app, processedMarkdown, wrapper, path, this.view);
 		await this.untilRendered();
@@ -465,12 +466,12 @@ class DocumentRenderer {
 	 * We attempt to make sure that if the Obsidian internals change, this will fail gracefully.
 	 */
 	private async loadComponents(view: Component) {
-		type InternalComponent = Component & {
-			_children: Component[];
-			onload: () => void | Promise<void>;
+		interface InternalComponent {
+			_children?: Component[];
+			onload?: () => Promise<void> | void;
 		}
 
-		const internalView = view as InternalComponent;
+		const internalView = view as unknown as InternalComponent;
 
 		// recursively call onload() on all children, depth-first
 		const loadChildren = async (
@@ -483,7 +484,7 @@ class DocumentRenderer {
 
 			visited.add(component);
 
-			const internalComponent = component as InternalComponent;
+			const internalComponent = component as unknown as InternalComponent;
 
 			if (internalComponent._children?.length) {
 				for (const child of internalComponent._children) {
@@ -494,14 +495,17 @@ class DocumentRenderer {
 			try {
 				// relies on the Sheet plugin (advanced-table-xt) not to be minified
 				if (component?.constructor?.name === 'SheetElement') {
-					await component.onload();
+					const sheet = component as unknown as { onload?: () => Promise<void> | void };
+					if (typeof sheet.onload === 'function') {
+						await sheet.onload();
+					}
 				}
 			} catch (error) {
 				console.error(`Error calling onload()`, error);
 			}
 		};
 
-		await loadChildren(internalView);
+		await loadChildren(view);
 	}
 
 	private preprocessMarkdown(markdown: string): string {
@@ -605,45 +609,41 @@ class DocumentRenderer {
 		}
 
 		node.querySelectorAll(`a.${className}`)
-			.forEach(node => {
+			.forEach(linkEl => {
+				const href = linkEl.getAttribute('href') ?? '';
+				const text = linkEl.getText();
+
 				switch (this.options.internalLinkHandling) {
 					case InternalLinkHandling.CONVERT_TO_OBSIDIAN_URI: {
-						const linkNode = node.parentNode!.createEl('a');
-						linkNode.innerText = node.getText();
-
+						let uri = '';
 						if (className === 'tag') {
-							linkNode.href = this.vaultSearchUri + "&query=tag:" + encodeURIComponent(node.getAttribute('href')!);
+							uri = this.vaultSearchUri + "&query=tag:" + encodeURIComponent(href);
 						} else {
-							if (node.getAttribute('href')!.startsWith('#')) {
-								linkNode.href = node.getAttribute('href')!;
+							if (href.startsWith('#')) {
+								uri = href;
 							} else {
-								linkNode.href = this.vaultOpenUri + "&file=" + encodeURIComponent(node.getAttribute('href')!);
+								uri = this.vaultOpenUri + "&file=" + encodeURIComponent(href);
 							}
 						}
-						linkNode.className = className;
-						node.parentNode!.replaceChild(linkNode, node);
+						const linkNode = createEl('a', { text, cls: className, href: uri });
+						linkEl.replaceWith(linkNode);
 					}
 						break;
 
 					case InternalLinkHandling.LINK_TO_HTML: {
-						const linkNode = node.parentNode!.createEl('a');
-						linkNode.innerText = node.getAttribute('href')!; //node.getText();
-						linkNode.className = className;
-						if (node.getAttribute('href')!.startsWith('#')) {
-							linkNode.href = node.getAttribute('href')!;
-						} else {
-							linkNode.href = node.getAttribute('href')!.replace(/^(.*?)(?:\.md)?(#.*?)?$/, '$1.html$2');
+						let htmlHref = href;
+						if (!href.startsWith('#')) {
+							htmlHref = href.replace(/^(.*?)(?:\.md)?(#.*?)?$/, '$1.html$2');
 						}
-						node.parentNode!.replaceChild(linkNode, node);
+						const linkNode = createEl('a', { text: href, cls: className, href: htmlHref });
+						linkEl.replaceWith(linkNode);
 					}
 						break;
 
 					case InternalLinkHandling.CONVERT_TO_TEXT:
 					default: {
-						const textNode = node.parentNode!.createEl('span');
-						textNode.innerText = node.getText();
-						textNode.className = className;
-						node.parentNode!.replaceChild(textNode, node);
+						const textNode = createEl('span', { text, cls: className });
+						linkEl.replaceWith(textNode);
 					}
 						break;
 				}
@@ -676,48 +676,51 @@ class DocumentRenderer {
 	/** Transform code blocks to tables */
 	private transformCodeToTables(node: HTMLElement) {
 		node.querySelectorAll('pre')
-			.forEach(node => {
-				const codeEl = node.querySelector('code');
-				const code = (codeEl ? codeEl.innerHTML : node.innerHTML).replace(/\n*$/, '');
-				const table = node.parentElement!.createEl('table');
-				table.className = 'source-table';
+			.forEach(preEl => {
+				const table = createEl('table', { cls: 'source-table' });
 				const bg = this.options.codeBlockBackground ? '#f5f5f5' : 'transparent';
-				table.style.backgroundColor = bg;
-				table.innerHTML = `<tr><td style="background-color: ${bg};"><pre style="background-color: transparent;">${code}</pre></td></tr>`;
-				node.parentElement!.replaceChild(table, node);
+				table.setCssStyles({ backgroundColor: bg });
+				const tr = table.createEl('tr');
+				const td = tr.createEl('td');
+				td.setCssStyles({ backgroundColor: bg });
+				const newPre = td.createEl('pre');
+				newPre.setCssStyles({ backgroundColor: 'transparent' });
+
+				const sourceEl = preEl.querySelector('code') ?? preEl;
+				while (sourceEl.firstChild) {
+					newPre.appendChild(sourceEl.firstChild);
+				}
+				preEl.replaceWith(table);
 			});
 	}
 
 	/** Transform callouts to tables */
 	private transformCalloutsToTables(node: HTMLElement) {
 		node.querySelectorAll('.callout')
-			.forEach(node => {
-				const callout = node.parentElement!.createEl('table');
-				callout.addClass('callout-table', 'callout');
-				callout.setAttribute('data-callout', node.getAttribute('data-callout') ?? 'quote');
+			.forEach(calloutEl => {
+				const callout = createEl('table', { cls: 'callout-table callout' });
+				callout.setAttribute('data-callout', calloutEl.getAttribute('data-callout') ?? 'quote');
 				const headRow = callout.createEl('tr');
-				const headColumn = headRow.createEl('td');
-				headColumn.addClass('callout-title');
-				// const img = node.querySelector('svg');
-				const title = node.querySelector('.callout-title-inner');
-
-				// if (img) {
-				// 	headColumn.appendChild(img);
-				// }
+				const headColumn = headRow.createEl('td', { cls: 'callout-title' });
+				const title = calloutEl.querySelector('.callout-title-inner');
 
 				if (title) {
 					const span = headColumn.createEl('span');
-					span.innerHTML = title.innerHTML;
+					while (title.firstChild) {
+						span.appendChild(title.firstChild);
+					}
 				}
 
-				const originalContent = node.querySelector('.callout-content');
+				const originalContent = calloutEl.querySelector('.callout-content');
 				if (originalContent) {
 					const row = callout.createEl('tr');
 					const column = row.createEl('td');
-					column.innerHTML = originalContent.innerHTML;
+					while (originalContent.firstChild) {
+						column.appendChild(originalContent.firstChild);
+					}
 				}
 
-				node.replaceWith(callout);
+				calloutEl.replaceWith(callout);
 			});
 	}
 
@@ -799,19 +802,21 @@ class DocumentRenderer {
 		const promises: Promise<void>[] = [];
 
 		const replaceSvg = async (svg: SVGSVGElement) => {
-			const style: HTMLStyleElement = svg.querySelector('style') || svg.appendChild(document.createElement('style'));
-			style.innerHTML += MERMAID_STYLESHEET;
-
-			const svgAsString = xmlSerializer.serializeToString(svg);
+			let svgAsString = xmlSerializer.serializeToString(svg);
+			if (MERMAID_STYLESHEET && !svgAsString.includes('<style')) {
+				svgAsString = svgAsString.replace(/<svg([^>]*)>/, `<svg$1><style>${MERMAID_STYLESHEET}</style>`);
+			}
 
 			const svgData = `data:image/svg+xml;base64,` + Buffer.from(svgAsString).toString('base64');
 			const dataUri = await this.imageToDataUri(svgData);
 
-			const img = svg.createEl('img');
-			img.style.cssText = svg.style.cssText;
+			const img = createEl('img');
+			if (svg.getAttribute('style')) {
+				img.setAttribute('style', svg.getAttribute('style') || '');
+			}
 			img.src = dataUri;
 
-			svg.parentElement!.replaceChild(img, svg);
+			svg.replaceWith(img);
 		};
 
 		node.querySelectorAll('svg')
@@ -862,7 +867,7 @@ class DocumentRenderer {
 	 * Draw image url to canvas and return as data uri containing image pixel data
 	 */
 	private async imageToDataUri(url: string): Promise<string> {
-		const canvas = document.createElement('canvas');
+		const canvas = createEl('canvas');
 		const ctx = canvas.getContext('2d');
 
 		const image = new Image();
@@ -873,27 +878,21 @@ class DocumentRenderer {
 				canvas.width = image.naturalWidth;
 				canvas.height = image.naturalHeight;
 
-				ctx!.drawImage(image, 0, 0);
+				ctx?.drawImage(image, 0, 0);
 
 				try {
 					const uri = canvas.toDataURL('image/png');
 					resolve(uri);
-				} catch (err) {
-					// leave error at `log` level (not `error`), since we leave an url that may be workable
-					console.log(`failed ${url}`, err);
-					// if we fail, leave the original url.
-					// This way images that we may not load from external sources (tainted) may still be accessed
-					// (eg. plantuml)
-					// TODO: should we attempt to fallback with fetch ?
+				} catch {
+					// If we fail, leave the original url
 					resolve(url);
 				}
 
 				canvas.remove();
 			}
 
-			image.onerror = (err) => {
-				console.log('could not load data uri');
-				// if we fail, leave the original url
+			image.onerror = () => {
+				// If we fail, leave the original url
 				resolve(url);
 			}
 		})
@@ -907,8 +906,11 @@ class DocumentRenderer {
 	 * Get binary data as b64 from a file in the vault
 	 */
 	private async readFromVault(path: string, mimeType: string): Promise<string> {
-		const tfile = this.app.vault.getAbstractFileByPath(path) as TFile;
-		const data = await this.app.vault.readBinary(tfile);
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) {
+			return '';
+		}
+		const data = await this.app.vault.readBinary(file);
 		return `data:${mimeType};base64,` + arrayBufferToBase64(data);
 	}
 
@@ -957,7 +959,7 @@ class DocumentRenderer {
 		});
 
 		// 3. Inline math: $...$ (ignoring escaped \$ and currency like $50)
-		text = text.replace(/(?<![\w\\])\$(?!\s)([^\$\n]+?)(?<!\s)\$(?![0-9a-zA-Z])/g, (match, texContent) => {
+		text = text.replace(/(?<![\w\\])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![0-9a-zA-Z])/g, (match, texContent) => {
 			const trimmed = texContent.trim();
 			// Skip currency e.g. $50, $100.50
 			if (/^[\d,.]+(\s*(million|billion|thousand|k|m|usd|eur|gbp|inr))?$/i.test(trimmed)) {
@@ -983,6 +985,15 @@ class DocumentRenderer {
 		return text;
 	}
 
+	private replaceElementWithHtml(target: Element, htmlString: string): void {
+		const doc = new DOMParser().parseFromString(htmlString, 'text/html');
+		const frag = document.createDocumentFragment();
+		while (doc.body.firstChild) {
+			frag.appendChild(doc.body.firstChild);
+		}
+		target.replaceWith(frag);
+	}
+
 	/**
 	 * Replaces all math placeholders and any remaining math elements with rendered MathML or KaTeX HTML.
 	 */
@@ -995,9 +1006,9 @@ class DocumentRenderer {
 				const rendered = this.renderMathFormula(item.tex, item.isBlock);
 				const parent = placeholder.parentElement;
 				if (item.isBlock && parent && parent.tagName === 'P' && parent.childNodes.length === 1) {
-					parent.outerHTML = rendered;
+					this.replaceElementWithHtml(parent, rendered);
 				} else {
-					(placeholder as HTMLElement).outerHTML = rendered;
+					this.replaceElementWithHtml(placeholder, rendered);
 				}
 			}
 		});
@@ -1010,7 +1021,7 @@ class DocumentRenderer {
 			if (rawTex && rawTex.trim()) {
 				const isBlock = el.classList.contains('math-block');
 				const rendered = this.renderMathFormula(rawTex.trim(), isBlock);
-				(el as HTMLElement).outerHTML = rendered;
+				this.replaceElementWithHtml(el, rendered);
 			}
 		});
 	}
@@ -1069,8 +1080,7 @@ class CopyingToHtmlModal extends Modal {
 	onOpen() {
 		const {titleEl, contentEl} = this;
 		titleEl.setText('Copying to clipboard');
-		this._progress = contentEl.createEl('progress');
-		this._progress.style.width = '100%';
+		this._progress = contentEl.createEl('progress', { cls: 'copy-as-html-progress' });
 	}
 
 	onClose() {
@@ -1088,18 +1098,14 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	// Thank you, Obsidian Tasks !
-	private static createFragmentWithHTML = (html: string) =>
-		createFragment((documentFragment) => (documentFragment.createDiv().innerHTML = html));
-
 	display(): void {
 		const {containerEl} = this;
 
 		containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Copy document as HTML Settings'});
+		new Setting(containerEl).setName('Copy document as HTML Settings').setHeading();
 
-		containerEl.createEl('h3', {text: 'Compatibility'});
+		new Setting(containerEl).setName('Compatibility').setHeading();
 
 		new Setting(containerEl)
 			.setName('Convert SVG files to bitmap')
@@ -1163,17 +1169,23 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 				}));
 
 
-		containerEl.createEl('h3', {text: 'Rendering'});
+		new Setting(containerEl).setName('Rendering').setHeading();
 
 		new Setting(containerEl)
 			.setName('Math formula handling')
-			.setDesc(CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-				This option controls how math formulas ($...$ and $$...$$) are rendered when copied:
-				<ul>
-				  <li><b>MathML (Recommended)</b>: Render as MathML (&lt;math&gt;). Pastes into Microsoft Word, Google Docs, Apple Pages, and LibreOffice as native, editable equations.</li>
-				  <li><b>HTML + MathML (KaTeX)</b>: Render as styled HTML with embedded MathML. Best for web apps, Notion, Anki, and Gmail.</li>
-				  <li><b>Leave as raw code</b>: Copies raw LaTeX ($...).</li>
-				</ul>`))
+			.setDesc(createFragment(frag => {
+				frag.appendText('This option controls how math formulas ($...$ and $$...$$) are rendered when copied:');
+				const ul = frag.createEl('ul');
+				const li1 = ul.createEl('li');
+				li1.createEl('b', { text: 'MathML (Recommended)' });
+				li1.appendText(': Render as MathML (<math>). Pastes into Microsoft Word, Google Docs, Apple Pages, and LibreOffice as native, editable equations.');
+				const li2 = ul.createEl('li');
+				li2.createEl('b', { text: 'HTML + MathML (KaTeX)' });
+				li2.appendText(': Render as styled HTML with embedded MathML. Best for web apps, Notion, Anki, and Gmail.');
+				const li3 = ul.createEl('li');
+				li3.createEl('b', { text: 'Leave as raw code' });
+				li3.appendText(': Copies raw LaTeX ($...).');
+			}))
 			.addDropdown(dropdown => dropdown
 				.addOption(MathHandling.MATHML, 'MathML (MS Word, Google Docs, LibreOffice)')
 				.addOption(MathHandling.HTML_MATHML, 'HTML + MathML (Web, Notion, Anki, Gmail)')
@@ -1217,9 +1229,10 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Remove dataview metadata lines')
-			.setDesc(CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-				<p>Remove lines that only contain dataview meta-data, eg. "rating:: 9". Metadata between square brackets is left intact.</p>
-				<p>Current limitations are that lines starting with a space are not removed, and lines that look like metadata in code blocks are removed if they don't start with a space</p>`))
+			.setDesc(createFragment(frag => {
+				frag.createEl('p', { text: 'Remove lines that only contain dataview meta-data, eg. "rating:: 9". Metadata between square brackets is left intact.' });
+				frag.createEl('p', { text: "Current limitations are that lines starting with a space are not removed, and lines that look like metadata in code blocks are removed if they don't start with a space" });
+			}))
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.removeDataviewMetadataLines)
 				.onChange(async (value) => {
@@ -1229,13 +1242,12 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Footnote handling')
-			.setDesc(CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-				<ul>
-				  <li>Remove everything: Remove references and links.</li>
-				  <li>Display only: leave reference and foot-note, but don't display as a link.</li> 
-				  <li>Display and link: attempt to link the reference to the footnote, may not work depending on paste target.</li>
-				</ul>`)
-			)
+			.setDesc(createFragment(frag => {
+				const ul = frag.createEl('ul');
+				ul.createEl('li', { text: 'Remove everything: Remove references and links.' });
+				ul.createEl('li', { text: "Display only: leave reference and foot-note, but don't display as a link." });
+				ul.createEl('li', { text: 'Display and link: attempt to link the reference to the footnote, may not work depending on paste target.' });
+			}))
 			.addDropdown(dropdown => dropdown
 				.addOption(FootnoteHandling.REMOVE_ALL.toString(), 'Remove everything')
 				.addOption(FootnoteHandling.REMOVE_LINK.toString(), 'Display only')
@@ -1263,15 +1275,14 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Link handling')
-			.setDesc(CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-				This option controls how links to Obsidian documents and tags are handled.
-				<ul>
-				  <li>Don't link: only render the link title</li>
-				  <li>Open with Obsidian: convert the link to an obsidian:// URI</li> 
-				  <li>Link to HTML: keep the link, but convert the extension to .html</li>
-				  <li>Leave as is: keep the generated link</li>	
-				</ul>`)
-			)
+			.setDesc(createFragment(frag => {
+				frag.appendText('This option controls how links to Obsidian documents and tags are handled.');
+				const ul = frag.createEl('ul');
+				ul.createEl('li', { text: "Don't link: only render the link title" });
+				ul.createEl('li', { text: 'Open with Obsidian: convert the link to an obsidian:// URI' });
+				ul.createEl('li', { text: 'Link to HTML: keep the link, but convert the extension to .html' });
+				ul.createEl('li', { text: 'Leave as is: keep the generated link' });
+			}))
 			.addDropdown(dropdown => dropdown
 				.addOption(InternalLinkHandling.CONVERT_TO_TEXT.toString(), 'Don\'t link')
 				.addOption(InternalLinkHandling.CONVERT_TO_OBSIDIAN_URI.toString(), 'Open with Obsidian')
@@ -1298,7 +1309,7 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 				})
 			)
 
-		containerEl.createEl('h3', {text: 'Custom templates (advanced)'});
+		new Setting(containerEl).setName('Custom templates (advanced)').setHeading();
 
 		const useCustomStylesheetSetting = new Setting(containerEl)
 			.setName('Provide a custom stylesheet')
@@ -1330,19 +1341,30 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 
 		const useCustomHtmlTemplateSetting = new Setting(containerEl)
 			.setName('Provide a custom HTML template')
-			.setDesc(CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`For even more customization, you can 
-provide a custom HTML template. Disabling this setting will restore the default template.<br/><br/>
-Note that the template is not used if the "Copy HTML fragment only" setting is enabled.`));
+			.setDesc(createFragment(frag => {
+				frag.appendText('For even more customization, you can provide a custom HTML template. Disabling this setting will restore the default template.');
+				frag.createEl('br');
+				frag.createEl('br');
+				frag.appendText('Note that the template is not used if the "Copy HTML fragment only" setting is enabled.');
+			}));
 
 		const customHtmlTemplateSetting = new Setting(containerEl)
-			.setDesc(CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
-			The template should include the following placeholders :<br/>
-<ul>
-	<li><code>$\{title}</code>: the document title</li>
-	<li><code>$\{stylesheet}</code>: the CSS stylesheet. The custom stylesheet will be applied if any is specified</li>
-	<li><code>$\{MERMAID_STYLESHEET}</code>: the CSS for mermaid diagrams</li>
-	<li><code>$\{body}</code>: the document body</li>
-</ul>`))
+			.setDesc(createFragment(frag => {
+				frag.appendText('The template should include the following placeholders :');
+				const ul = frag.createEl('ul');
+				const li1 = ul.createEl('li');
+				li1.createEl('code', { text: '${title}' });
+				li1.appendText(': the document title');
+				const li2 = ul.createEl('li');
+				li2.createEl('code', { text: '${stylesheet}' });
+				li2.appendText(': the CSS stylesheet. The custom stylesheet will be applied if any is specified');
+				const li3 = ul.createEl('li');
+				li3.createEl('code', { text: '${MERMAID_STYLESHEET}' });
+				li3.appendText(': the CSS for mermaid diagrams');
+				const li4 = ul.createEl('li');
+				li4.createEl('code', { text: '${body}' });
+				li4.appendText(': the document body');
+			}))
 			.setClass('customizable-text-setting')
 			.addTextArea(textArea => textArea
 				.setValue(this.plugin.settings.htmlTemplate)
@@ -1366,11 +1388,15 @@ Note that the template is not used if the "Copy HTML fragment only" setting is e
 				});
 		});
 
-		containerEl.createEl('h3', {text: 'Exotic / Developer options'});
+		new Setting(containerEl).setName('Exotic / Developer options').setHeading();
 
 		new Setting(containerEl)
 			.setName("Don't embed images")
-			.setDesc("When this option is enabled, images will not be embedded in the HTML document, but <em>broken</em> links will be left in place. This is not recommended.")
+			.setDesc(createFragment(frag => {
+				frag.appendText('When this option is enabled, images will not be embedded in the HTML document, but ');
+				frag.createEl('em', { text: 'broken' });
+				frag.appendText(' links will be left in place. This is not recommended.');
+			}))
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.disableImageEmbedding)
 				.onChange(async (value) => {
@@ -1479,19 +1505,19 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 			id: 'smart-copy-as-html',
 			name: 'Copy selection or document to clipboard',
 			checkCallback: this.buildCheckCallback(
-				view => this.copyFromView(view, view.editor.somethingSelected()))
-		})
+				view => { void this.copyFromView(view, view.editor.somethingSelected()); })
+		});
 
 		this.addCommand({
 			id: 'copy-as-html',
 			name: 'Copy entire document to clipboard',
-			checkCallback: this.buildCheckCallback(view => this.copyFromView(view, false))
+			checkCallback: this.buildCheckCallback(view => { void this.copyFromView(view, false); })
 		});
 
 		this.addCommand({
 			id: 'copy-selection-as-html',
 			name: 'Copy current selection to clipboard',
-			checkCallback: this.buildCheckCallback(view => this.copyFromView(view, true))
+			checkCallback: this.buildCheckCallback(view => { void this.copyFromView(view, true); })
 		});
 
 		this.addCommand({
@@ -1521,8 +1547,10 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 							"text/html": new Blob([fullHtml], { type: "text/html" }),
 							"text/plain": new Blob([tex], { type: "text/plain" }),
 						});
-						navigator.clipboard.write([data]).then(() => {
+						void navigator.clipboard.write([data]).then(() => {
 							new Notice('Copied selection to clipboard as MathML');
+						}).catch((err: unknown) => {
+							new Notice(`Failed to copy to clipboard: ${String(err)}`);
 						});
 					} catch (e) {
 						new Notice(`Failed to convert math: ${e}`);
@@ -1552,6 +1580,7 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 		// Intercept paste events to auto-format math from ChatGPT / Web
 		this.registerEvent(
 			this.app.workspace.on('editor-paste', (evt: ClipboardEvent, editor: Editor) => {
+				if (evt.defaultPrevented) return;
 				this.handleEditorPaste(evt, editor);
 			})
 		);
@@ -1577,13 +1606,11 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 	private buildCheckCallback(action: (activeView: MarkdownView) => void) {
 		return (checking: boolean): boolean => {
 			if (copyIsRunning) {
-				console.log('Document is already being copied');
 				return false;
 			}
 
 			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 			if (!activeView) {
-				console.log('Nothing to copy: No active markdown view');
 				return false;
 			}
 
@@ -1597,13 +1624,10 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 
 	private async copyFromView(activeView: MarkdownView, onlySelected: boolean) {
 		if (!activeView.editor) {
-			console.error('No editor in active view, nothing to copy');
 			return;
 		}
 
 		if (!activeView.file) {
-			// should not happen if we have an editor in the active view ?
-			console.error('No file in active view, nothing to copy');
 			return;
 		}
 
@@ -1616,12 +1640,10 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 
 	private async copyFromFile(file: TAbstractFile) {
 		if (!(file instanceof TFile)) {
-			console.log(`cannot copy folder to HTML: ${file.path}`);
 			return;
 		}
 
 		if (file.extension.toLowerCase() !== 'md') {
-			console.log(`cannot only copy .md files to HTML: ${file.path}`);
 			return;
 		}
 
@@ -1630,7 +1652,6 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 	}
 
 	private async doCopy(markdown: string, path: string, name: string, isFullDocument: boolean) {
-		console.log(`Copying "${path}" to clipboard...`);
 		const title = name.replace(/\.md$/i, '');
 
 		const copier = new DocumentRenderer(this.app, this.settings);
@@ -1644,8 +1665,7 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 			const htmlBody = await copier.renderDocument(markdown, path);
 
 			if (this.settings.fileNameAsHeader && isFullDocument) {
-				const h1 = htmlBody.createEl('h1');
-				h1.innerHTML = title;
+				const h1 = createEl('h1', { text: title });
 				htmlBody.insertBefore(h1, htmlBody.firstChild);
 			}
 
@@ -1665,8 +1685,7 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 				});
 
 			await navigator.clipboard.write([data]);
-			console.log(`Copied to clipboard as HTML`);
-			new Notice(`Copied to clipboard as HTML`)
+			new Notice(`Copied to clipboard as HTML`);
 		} catch (error) {
 			new Notice(`copy failed: ${error}`);
 			console.error('copy failed', error);
