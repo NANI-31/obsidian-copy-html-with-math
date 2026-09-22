@@ -2,7 +2,9 @@ import {
 	App,
 	arrayBufferToBase64,
 	Component,
+	Editor,
 	FileSystemAdapter,
+	htmlToMarkdown,
 	MarkdownRenderer,
 	MarkdownView,
 	Modal,
@@ -1150,6 +1152,16 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		new Setting(containerEl)
+			.setName('Auto-format pasted math from ChatGPT & Web (Ctrl+V)')
+			.setDesc("When pasting content from ChatGPT, Claude, Wikipedia, etc., automatically cleans up duplicate math text and formats formulas as proper Obsidian LaTeX ($...$ and $$...$$).")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.cleanPastedMath)
+				.onChange(async (value) => {
+					this.plugin.settings.cleanPastedMath = value;
+					await this.plugin.saveSettings();
+				}));
+
 
 		containerEl.createEl('h3', {text: 'Rendering'});
 
@@ -1429,6 +1441,11 @@ type CopyDocumentAsHTMLSettings = {
 	 * Apply shaded background color to code blocks (#f5f5f5). If false (default), background is transparent.
 	 */
 	codeBlockBackground: boolean;
+
+	/**
+	 * Auto-format pasted math from ChatGPT, Claude, and web pages (Ctrl+V) into proper LaTeX ($...$ and $$...$$)
+	 */
+	cleanPastedMath: boolean;
 }
 
 const DEFAULT_SETTINGS: CopyDocumentAsHTMLSettings = {
@@ -1449,6 +1466,7 @@ const DEFAULT_SETTINGS: CopyDocumentAsHTMLSettings = {
 	disableImageEmbedding: false,
 	mathHandling: MathHandling.MATHML,
 	codeBlockBackground: false,
+	cleanPastedMath: true,
 }
 
 export default class CopyDocumentAsHTMLPlugin extends Plugin {
@@ -1530,6 +1548,13 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 		// Register UI elements
 		this.addSettingTab(new CopyDocumentAsHTMLSettingsTab(this.app, this));
 		this.setupEditorMenuEntry();
+
+		// Intercept paste events to auto-format math from ChatGPT / Web
+		this.registerEvent(
+			this.app.workspace.on('editor-paste', (evt: ClipboardEvent, editor: Editor) => {
+				this.handleEditorPaste(evt, editor);
+			})
+		);
 	}
 
 	async loadSettings() {
@@ -1679,5 +1704,110 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 				});
 			})
 		);
+	}
+
+	/**
+	 * Automatically clean up math copied from ChatGPT, Claude, Wikipedia, etc. on Ctrl+V
+	 */
+	private handleEditorPaste(evt: ClipboardEvent, editor: Editor): void {
+		if (evt.defaultPrevented || !this.settings.cleanPastedMath) return;
+		const clipboardData = evt.clipboardData;
+		if (!clipboardData) return;
+
+		const html = clipboardData.getData('text/html');
+		const plain = clipboardData.getData('text/plain');
+
+		const hasMath = Boolean(html && (
+			html.includes('katex') ||
+			html.includes('math-mathml') ||
+			html.includes('<math') ||
+			html.includes('MathJax') ||
+			html.includes('mjx-container')
+		));
+
+		if (hasMath && html) {
+			try {
+				const parser = new DOMParser();
+				const doc = parser.parseFromString(html, 'text/html');
+
+				// 1. Process block/display math first: .katex-display
+				doc.querySelectorAll('.katex-display').forEach(displayEl => {
+					const annotation = displayEl.querySelector('annotation[encoding="application/x-tex"]') || displayEl.querySelector('annotation');
+					const tex = annotation ? annotation.textContent?.trim() : '';
+					if (tex) {
+						const textNode = doc.createTextNode(`\n\n$$${tex}$$\n\n`);
+						displayEl.replaceWith(textNode);
+					}
+				});
+
+				// 2. Process inline math: .katex
+				doc.querySelectorAll('.katex').forEach(katexEl => {
+					if (!katexEl.isConnected) return;
+					const annotation = katexEl.querySelector('annotation[encoding="application/x-tex"]') || katexEl.querySelector('annotation');
+					const tex = annotation ? annotation.textContent?.trim() : '';
+					if (tex) {
+						const textNode = doc.createTextNode(`$${tex}$`);
+						katexEl.replaceWith(textNode);
+					}
+				});
+
+				// 3. Process MathJax display
+				doc.querySelectorAll('mjx-container[display="true"], .MathJax_Display').forEach(mjxEl => {
+					const annotation = mjxEl.querySelector('annotation[encoding="application/x-tex"]') || mjxEl.querySelector('annotation');
+					const tex = (annotation ? annotation.textContent?.trim() : mjxEl.getAttribute('data-tex') || mjxEl.getAttribute('aria-label')) || '';
+					if (tex) {
+						const textNode = doc.createTextNode(`\n\n$$${tex}$$\n\n`);
+						mjxEl.replaceWith(textNode);
+					}
+				});
+
+				// 4. Process MathJax inline
+				doc.querySelectorAll('mjx-container, .MathJax').forEach(mjxEl => {
+					if (!mjxEl.isConnected) return;
+					const annotation = mjxEl.querySelector('annotation[encoding="application/x-tex"]') || mjxEl.querySelector('annotation');
+					const tex = (annotation ? annotation.textContent?.trim() : mjxEl.getAttribute('data-tex') || mjxEl.getAttribute('aria-label')) || '';
+					if (tex) {
+						const textNode = doc.createTextNode(`$${tex}$`);
+						mjxEl.replaceWith(textNode);
+					}
+				});
+
+				// 5. Generic <math> elements
+				doc.querySelectorAll('math').forEach(mathEl => {
+					if (!mathEl.isConnected) return;
+					const annotation = mathEl.querySelector('annotation[encoding="application/x-tex"]') || mathEl.querySelector('annotation');
+					const tex = annotation ? annotation.textContent?.trim() : '';
+					if (tex) {
+						const isBlock = mathEl.getAttribute('display') === 'block';
+						const textNode = doc.createTextNode(isBlock ? `\n\n$$${tex}$$\n\n` : `$${tex}$`);
+						mathEl.replaceWith(textNode);
+					}
+				});
+
+				let markdown = htmlToMarkdown(doc.body);
+
+				// Clean up LaTeX shorthand brackets \[...\] and \(...\) if any remain
+				markdown = markdown.replace(/\\\[([\s\S]*?)\\\]/g, (match, formula) => `\n\n$$${formula.trim()}$$\n\n`);
+				markdown = markdown.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => `$${formula.trim()}$`);
+
+				// Normalize excessive newlines around math blocks
+				markdown = markdown.replace(/\n{3,}/g, '\n\n');
+
+				evt.preventDefault();
+				editor.replaceSelection(markdown);
+				return;
+			} catch (err) {
+				console.error('Failed to parse pasted math from HTML:', err);
+			}
+		}
+
+		// Handle plain text with LaTeX shorthand brackets \[...\] or \(...\)
+		if (plain && (plain.includes('\\[') || plain.includes('\\('))) {
+			let cleaned = plain.replace(/\\\[([\s\S]*?)\\\]/g, (match, formula) => `\n\n$$${formula.trim()}$$\n\n`);
+			cleaned = cleaned.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => `$${formula.trim()}$`);
+			cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+			evt.preventDefault();
+			editor.replaceSelection(cleaned);
+		}
 	}
 }

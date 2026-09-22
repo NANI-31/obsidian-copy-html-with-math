@@ -14171,6 +14171,10 @@ var _CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSetting
       this.plugin.settings.formatCalloutsWithTables = value;
       await this.plugin.saveSettings();
     }));
+    new import_obsidian.Setting(containerEl).setName("Auto-format pasted math from ChatGPT & Web (Ctrl+V)").setDesc("When pasting content from ChatGPT, Claude, Wikipedia, etc., automatically cleans up duplicate math text and formats formulas as proper Obsidian LaTeX ($...$ and $$...$$).").addToggle((toggle) => toggle.setValue(this.plugin.settings.cleanPastedMath).onChange(async (value) => {
+      this.plugin.settings.cleanPastedMath = value;
+      await this.plugin.saveSettings();
+    }));
     containerEl.createEl("h3", { text: "Rendering" });
     new import_obsidian.Setting(containerEl).setName("Math formula handling").setDesc(_CopyDocumentAsHTMLSettingsTab.createFragmentWithHTML(`
 				This option controls how math formulas ($...$ and $$...$$) are rendered when copied:
@@ -14316,7 +14320,8 @@ var DEFAULT_SETTINGS = {
   fileNameAsHeader: true,
   disableImageEmbedding: false,
   mathHandling: "mathml" /* MATHML */,
-  codeBlockBackground: false
+  codeBlockBackground: false,
+  cleanPastedMath: true
 };
 var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
   async onload() {
@@ -14382,6 +14387,9 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
     afterAllPostProcessor.sortOrder = 1e4;
     this.addSettingTab(new CopyDocumentAsHTMLSettingsTab(this.app, this));
     this.setupEditorMenuEntry();
+    this.registerEvent(this.app.workspace.on("editor-paste", (evt, editor) => {
+      this.handleEditorPaste(evt, editor);
+    }));
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -14489,5 +14497,109 @@ pre { background-color: ${codeBg} !important; }
         });
       });
     }));
+  }
+  handleEditorPaste(evt, editor) {
+    if (evt.defaultPrevented || !this.settings.cleanPastedMath)
+      return;
+    const clipboardData = evt.clipboardData;
+    if (!clipboardData)
+      return;
+    const html = clipboardData.getData("text/html");
+    const plain = clipboardData.getData("text/plain");
+    const hasMath = Boolean(html && (html.includes("katex") || html.includes("math-mathml") || html.includes("<math") || html.includes("MathJax") || html.includes("mjx-container")));
+    if (hasMath && html) {
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        doc.querySelectorAll(".katex-display").forEach((displayEl) => {
+          var _a;
+          const annotation = displayEl.querySelector('annotation[encoding="application/x-tex"]') || displayEl.querySelector("annotation");
+          const tex = annotation ? (_a = annotation.textContent) == null ? void 0 : _a.trim() : "";
+          if (tex) {
+            const textNode = doc.createTextNode(`
+
+$$${tex}$$
+
+`);
+            displayEl.replaceWith(textNode);
+          }
+        });
+        doc.querySelectorAll(".katex").forEach((katexEl) => {
+          var _a;
+          if (!katexEl.isConnected)
+            return;
+          const annotation = katexEl.querySelector('annotation[encoding="application/x-tex"]') || katexEl.querySelector("annotation");
+          const tex = annotation ? (_a = annotation.textContent) == null ? void 0 : _a.trim() : "";
+          if (tex) {
+            const textNode = doc.createTextNode(`$${tex}$`);
+            katexEl.replaceWith(textNode);
+          }
+        });
+        doc.querySelectorAll('mjx-container[display="true"], .MathJax_Display').forEach((mjxEl) => {
+          var _a;
+          const annotation = mjxEl.querySelector('annotation[encoding="application/x-tex"]') || mjxEl.querySelector("annotation");
+          const tex = (annotation ? (_a = annotation.textContent) == null ? void 0 : _a.trim() : mjxEl.getAttribute("data-tex") || mjxEl.getAttribute("aria-label")) || "";
+          if (tex) {
+            const textNode = doc.createTextNode(`
+
+$$${tex}$$
+
+`);
+            mjxEl.replaceWith(textNode);
+          }
+        });
+        doc.querySelectorAll("mjx-container, .MathJax").forEach((mjxEl) => {
+          var _a;
+          if (!mjxEl.isConnected)
+            return;
+          const annotation = mjxEl.querySelector('annotation[encoding="application/x-tex"]') || mjxEl.querySelector("annotation");
+          const tex = (annotation ? (_a = annotation.textContent) == null ? void 0 : _a.trim() : mjxEl.getAttribute("data-tex") || mjxEl.getAttribute("aria-label")) || "";
+          if (tex) {
+            const textNode = doc.createTextNode(`$${tex}$`);
+            mjxEl.replaceWith(textNode);
+          }
+        });
+        doc.querySelectorAll("math").forEach((mathEl) => {
+          var _a;
+          if (!mathEl.isConnected)
+            return;
+          const annotation = mathEl.querySelector('annotation[encoding="application/x-tex"]') || mathEl.querySelector("annotation");
+          const tex = annotation ? (_a = annotation.textContent) == null ? void 0 : _a.trim() : "";
+          if (tex) {
+            const isBlock = mathEl.getAttribute("display") === "block";
+            const textNode = doc.createTextNode(isBlock ? `
+
+$$${tex}$$
+
+` : `$${tex}$`);
+            mathEl.replaceWith(textNode);
+          }
+        });
+        let markdown = (0, import_obsidian.htmlToMarkdown)(doc.body);
+        markdown = markdown.replace(/\\\[([\s\S]*?)\\\]/g, (match, formula) => `
+
+$$${formula.trim()}$$
+
+`);
+        markdown = markdown.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => `$${formula.trim()}$`);
+        markdown = markdown.replace(/\n{3,}/g, "\n\n");
+        evt.preventDefault();
+        editor.replaceSelection(markdown);
+        return;
+      } catch (err) {
+        console.error("Failed to parse pasted math from HTML:", err);
+      }
+    }
+    if (plain && (plain.includes("\\[") || plain.includes("\\("))) {
+      let cleaned = plain.replace(/\\\[([\s\S]*?)\\\]/g, (match, formula) => `
+
+$$${formula.trim()}$$
+
+`);
+      cleaned = cleaned.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => `$${formula.trim()}$`);
+      cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+      evt.preventDefault();
+      editor.replaceSelection(cleaned);
+    }
   }
 };
