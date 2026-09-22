@@ -51,13 +51,25 @@ const DEFAULT_STYLESHEET =
   font-family: "Roboto","Helvetica Neue",Helvetica,Arial,sans-serif
 }
 
-code, kbd, pre {
+code, kbd {
   font-family: "Roboto Mono", "Courier New", Courier, monospace;
   background-color: #f5f5f5;
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
 }
 
 pre {
-  padding: 1em 0.5em;
+  font-family: "Roboto Mono", "Courier New", Courier, monospace;
+  background-color: #f5f5f5;
+  padding: 0.8em 1em;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+pre code {
+  background-color: transparent !important;
+  padding: 0 !important;
+  border: none !important;
 }
 
 table {
@@ -200,6 +212,21 @@ ul.contains-task-list li input[type="checkbox"] {
 .source-table {
   width: 100%;
   background-color: #f5f5f5;
+  border: 1px solid #ddd;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+.source-table td {
+  border: 1px solid #ddd;
+  padding: 0.6em 0.8em;
+}
+
+.source-table pre {
+  margin: 0;
+  padding: 0;
+  background-color: transparent !important;
+  border: none !important;
 }
 
 math {
@@ -341,7 +368,7 @@ type DocumentRendererOptions = {
 const documentRendererDefaults: DocumentRendererOptions = {
 	convertSvgToBitmap: true,
 	removeFrontMatter: true,
-	formatCodeWithTables: false,
+	formatCodeWithTables: true,
 	formatCalloutsWithTables: false,
 	embedExternalLinks: false,
 	removeDataviewMetadataLines: false,
@@ -645,13 +672,11 @@ class DocumentRenderer {
 		node.querySelectorAll('pre')
 			.forEach(node => {
 				const codeEl = node.querySelector('code');
-				if (codeEl) {
-					const code = codeEl.innerHTML.replace(/\n*$/, '');
-					const table = node.parentElement!.createEl('table');
-					table.className = 'source-table';
-					table.innerHTML = `<tr><td><pre>${code}</pre></td></tr>`;
-					node.parentElement!.replaceChild(table, node);
-				}
+				const code = (codeEl ? codeEl.innerHTML : node.innerHTML).replace(/\n*$/, '');
+				const table = node.parentElement!.createEl('table');
+				table.className = 'source-table';
+				table.innerHTML = `<tr><td><pre>${code}</pre></td></tr>`;
+				node.parentElement!.replaceChild(table, node);
 			});
 	}
 
@@ -1392,14 +1417,14 @@ const DEFAULT_SETTINGS: CopyDocumentAsHTMLSettings = {
 	useCustomHtmlTemplate: false,
 	embedExternalLinks: false,
 	removeDataviewMetadataLines: false,
-	formatCodeWithTables: false,
+	formatCodeWithTables: true,
 	formatCalloutsWithTables: false,
 	footnoteHandling: FootnoteHandling.REMOVE_LINK,
 	internalLinkHandling: InternalLinkHandling.CONVERT_TO_TEXT,
 	styleSheet: DEFAULT_STYLESHEET,
 	htmlTemplate: DEFAULT_HTML_TEMPLATE,
 	bareHtmlOnly: false,
-	fileNameAsHeader: false,
+	fileNameAsHeader: true,
 	disableImageEmbedding: false,
 	mathHandling: MathHandling.MATHML,
 }
