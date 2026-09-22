@@ -1,7 +1,7 @@
 {
 	"id": "copy-html-with-math",
 	"name": "Copy as HTML with Math",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"minAppVersion": "1.6.3",
 	"description": "Copy notes or selections to clipboard as HTML with math formulas rendered as MathML/KaTeX for Microsoft Word, Google Docs, Anki, and Web.",
 	"author": "NANI-31",

@@ -13446,7 +13446,6 @@ code, kbd {
 
 pre {
   font-family: "Roboto Mono", "Courier New", Courier, monospace;
-  background-color: #f5f5f5;
   padding: 0.8em 1em;
   border: 1px solid #ddd;
   border-radius: 4px;
@@ -13597,7 +13596,6 @@ ul.contains-task-list li input[type="checkbox"] {
 
 .source-table {
   width: 100%;
-  background-color: #f5f5f5;
   border: 1px solid #ddd;
   border-collapse: collapse;
   margin: 1em 0;
@@ -13674,7 +13672,8 @@ var documentRendererDefaults = {
   footnoteHandling: 2 /* REMOVE_LINK */,
   internalLinkHandling: 0 /* CONVERT_TO_TEXT */,
   disableImageEmbedding: false,
-  mathHandling: "mathml" /* MATHML */
+  mathHandling: "mathml" /* MATHML */,
+  codeBlockBackground: false
 };
 var DocumentRenderer = class {
   constructor(app, options = documentRendererDefaults) {
@@ -13773,6 +13772,10 @@ var DocumentRenderer = class {
     this.removeStrangeNewWorldsLinks(node);
     if (this.options.formatCodeWithTables) {
       this.transformCodeToTables(node);
+    } else {
+      node.querySelectorAll("pre").forEach((pre) => {
+        pre.style.backgroundColor = this.options.codeBlockBackground ? "#f5f5f5" : "transparent";
+      });
     }
     if (this.options.formatCalloutsWithTables) {
       this.transformCalloutsToTables(node);
@@ -13862,7 +13865,9 @@ var DocumentRenderer = class {
       const code = (codeEl ? codeEl.innerHTML : node2.innerHTML).replace(/\n*$/, "");
       const table = node2.parentElement.createEl("table");
       table.className = "source-table";
-      table.innerHTML = `<tr><td><pre>${code}</pre></td></tr>`;
+      const bg = this.options.codeBlockBackground ? "#f5f5f5" : "transparent";
+      table.style.backgroundColor = bg;
+      table.innerHTML = `<tr><td style="background-color: ${bg};"><pre style="background-color: transparent;">${code}</pre></td></tr>`;
       node2.parentElement.replaceChild(table, node2);
     });
   }
@@ -14158,6 +14163,10 @@ var _CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSetting
       this.plugin.settings.formatCodeWithTables = value;
       await this.plugin.saveSettings();
     }));
+    new import_obsidian.Setting(containerEl).setName("Code block background color").setDesc("If checked, code blocks will have a shaded background color (#f5f5f5). If unchecked (default), the background is transparent.").addToggle((toggle) => toggle.setValue(this.plugin.settings.codeBlockBackground).onChange(async (value) => {
+      this.plugin.settings.codeBlockBackground = value;
+      await this.plugin.saveSettings();
+    }));
     new import_obsidian.Setting(containerEl).setName("Render callouts with tables").setDesc("If checked callouts are rendered as tables, which makes pasting into Google docs somewhat prettier.").addToggle((toggle) => toggle.setValue(this.plugin.settings.formatCalloutsWithTables).onChange(async (value) => {
       this.plugin.settings.formatCalloutsWithTables = value;
       await this.plugin.saveSettings();
@@ -14306,7 +14315,8 @@ var DEFAULT_SETTINGS = {
   bareHtmlOnly: false,
   fileNameAsHeader: true,
   disableImageEmbedding: false,
-  mathHandling: "mathml" /* MATHML */
+  mathHandling: "mathml" /* MATHML */,
+  codeBlockBackground: false
 };
 var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
   async onload() {
@@ -14463,7 +14473,13 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
   }
   expandHtmlTemplate(html, title) {
     const template = this.settings.useCustomHtmlTemplate ? this.settings.htmlTemplate : DEFAULT_HTML_TEMPLATE;
-    return template.replace("${title}", title).replace("${body}", html).replace("${stylesheet}", this.settings.styleSheet).replace("${MERMAID_STYLESHEET}", MERMAID_STYLESHEET);
+    let stylesheet = this.settings.styleSheet;
+    const codeBg = this.settings.codeBlockBackground ? "#f5f5f5" : "transparent";
+    stylesheet += `
+.source-table, .source-table td { background-color: ${codeBg} !important; }
+pre { background-color: ${codeBg} !important; }
+`;
+    return template.replace("${title}", title).replace("${body}", html).replace("${stylesheet}", stylesheet).replace("${MERMAID_STYLESHEET}", MERMAID_STYLESHEET);
   }
   setupEditorMenuEntry() {
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file, view) => {

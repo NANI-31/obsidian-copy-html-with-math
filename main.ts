@@ -60,7 +60,6 @@ code, kbd {
 
 pre {
   font-family: "Roboto Mono", "Courier New", Courier, monospace;
-  background-color: #f5f5f5;
   padding: 0.8em 1em;
   border: 1px solid #ddd;
   border-radius: 4px;
@@ -211,7 +210,6 @@ ul.contains-task-list li input[type="checkbox"] {
 
 .source-table {
   width: 100%;
-  background-color: #f5f5f5;
   border: 1px solid #ddd;
   border-collapse: collapse;
   margin: 1em 0;
@@ -362,7 +360,8 @@ type DocumentRendererOptions = {
 	footnoteHandling: FootnoteHandling,
 	internalLinkHandling: InternalLinkHandling,
 	disableImageEmbedding: boolean,
-	mathHandling: MathHandling
+	mathHandling: MathHandling,
+	codeBlockBackground: boolean
 };
 
 const documentRendererDefaults: DocumentRendererOptions = {
@@ -375,7 +374,8 @@ const documentRendererDefaults: DocumentRendererOptions = {
 	footnoteHandling: FootnoteHandling.REMOVE_LINK,
 	internalLinkHandling: InternalLinkHandling.CONVERT_TO_TEXT,
 	disableImageEmbedding: false,
-	mathHandling: MathHandling.MATHML
+	mathHandling: MathHandling.MATHML,
+	codeBlockBackground: false
 };
 
 /**
@@ -560,6 +560,10 @@ class DocumentRenderer {
 
 		if (this.options.formatCodeWithTables) {
 			this.transformCodeToTables(node);
+		} else {
+			node.querySelectorAll('pre').forEach(pre => {
+				pre.style.backgroundColor = this.options.codeBlockBackground ? '#f5f5f5' : 'transparent';
+			});
 		}
 
 		if (this.options.formatCalloutsWithTables) {
@@ -675,7 +679,9 @@ class DocumentRenderer {
 				const code = (codeEl ? codeEl.innerHTML : node.innerHTML).replace(/\n*$/, '');
 				const table = node.parentElement!.createEl('table');
 				table.className = 'source-table';
-				table.innerHTML = `<tr><td><pre>${code}</pre></td></tr>`;
+				const bg = this.options.codeBlockBackground ? '#f5f5f5' : 'transparent';
+				table.style.backgroundColor = bg;
+				table.innerHTML = `<tr><td style="background-color: ${bg};"><pre style="background-color: transparent;">${code}</pre></td></tr>`;
 				node.parentElement!.replaceChild(table, node);
 			});
 	}
@@ -1125,6 +1131,16 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
+			.setName('Code block background color')
+			.setDesc("If checked, code blocks will have a shaded background color (#f5f5f5). If unchecked (default), the background is transparent.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.codeBlockBackground)
+				.onChange(async (value) => {
+					this.plugin.settings.codeBlockBackground = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
 			.setName('Render callouts with tables')
 			.setDesc("If checked callouts are rendered as tables, which makes pasting into Google docs somewhat prettier.")
 			.addToggle(toggle => toggle
@@ -1408,6 +1424,11 @@ type CopyDocumentAsHTMLSettings = {
 	 * Format to convert math formulas ($...$ and $$...$$) to
 	 */
 	mathHandling: MathHandling;
+
+	/**
+	 * Apply shaded background color to code blocks (#f5f5f5). If false (default), background is transparent.
+	 */
+	codeBlockBackground: boolean;
 }
 
 const DEFAULT_SETTINGS: CopyDocumentAsHTMLSettings = {
@@ -1427,6 +1448,7 @@ const DEFAULT_SETTINGS: CopyDocumentAsHTMLSettings = {
 	fileNameAsHeader: true,
 	disableImageEmbedding: false,
 	mathHandling: MathHandling.MATHML,
+	codeBlockBackground: false,
 }
 
 export default class CopyDocumentAsHTMLPlugin extends Plugin {
@@ -1633,10 +1655,14 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 			? this.settings.htmlTemplate
 			: DEFAULT_HTML_TEMPLATE;
 
+		let stylesheet = this.settings.styleSheet;
+		const codeBg = this.settings.codeBlockBackground ? '#f5f5f5' : 'transparent';
+		stylesheet += `\n.source-table, .source-table td { background-color: ${codeBg} !important; }\npre { background-color: ${codeBg} !important; }\n`;
+
 		return template
 			.replace('${title}', title)
 			.replace('${body}', html)
-			.replace('${stylesheet}', this.settings.styleSheet)
+			.replace('${stylesheet}', stylesheet)
 			.replace('${MERMAID_STYLESHEET}', MERMAID_STYLESHEET);
 	}
 
