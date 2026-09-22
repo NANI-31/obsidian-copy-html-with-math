@@ -471,8 +471,6 @@ class DocumentRenderer {
 			onload?: () => Promise<void> | void;
 		}
 
-		const internalView = view as unknown as InternalComponent;
-
 		// recursively call onload() on all children, depth-first
 		const loadChildren = async (
 			component: Component,
@@ -642,7 +640,7 @@ class DocumentRenderer {
 
 					case InternalLinkHandling.CONVERT_TO_TEXT:
 					default: {
-						const textNode = createEl('span', { text, cls: className });
+						const textNode = createSpan({ text, cls: className });
 						linkEl.replaceWith(textNode);
 					}
 						break;
@@ -705,7 +703,7 @@ class DocumentRenderer {
 				const title = calloutEl.querySelector('.callout-title-inner');
 
 				if (title) {
-					const span = headColumn.createEl('span');
+					const span = headColumn.createSpan();
 					while (title.firstChild) {
 						span.appendChild(title.firstChild);
 					}
@@ -745,8 +743,8 @@ class DocumentRenderer {
 					link.parentNode!.removeChild(link);
 				} else {
 					// remove from reference
-					const span = link.parentNode!.createEl('span', {text: link.getText(), cls: 'footnote-link'})
-					link.parentNode!.replaceChild(span, link);
+					const span = createSpan({text, cls: 'footnote-link'});
+					link.replaceWith(span);
 				}
 			});
 	}
@@ -807,7 +805,7 @@ class DocumentRenderer {
 				svgAsString = svgAsString.replace(/<svg([^>]*)>/, `<svg$1><style>${MERMAID_STYLESHEET}</style>`);
 			}
 
-			const svgData = `data:image/svg+xml;base64,` + Buffer.from(svgAsString).toString('base64');
+			const svgData = `data:image/svg+xml;base64,` + arrayBufferToBase64(new TextEncoder().encode(svgAsString).buffer);
 			const dataUri = await this.imageToDataUri(svgData);
 
 			const img = createEl('img');
@@ -952,14 +950,14 @@ class DocumentRenderer {
 		});
 
 		// 2. Display math: $$...$$
-		text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, texContent) => {
+		text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match: string, texContent: string): string => {
 			const id = `copy-math-block-${this.mathItems.size}`;
 			this.mathItems.set(id, { tex: texContent.trim(), isBlock: true });
 			return `\n\n<span class="copy-math-placeholder" data-math-id="${id}" data-math-block="true"></span>\n\n`;
 		});
 
 		// 3. Inline math: $...$ (ignoring escaped \$ and currency like $50)
-		text = text.replace(/(?<![\w\\])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![0-9a-zA-Z])/g, (match, texContent) => {
+		text = text.replace(/(?<![\w\\])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![0-9a-zA-Z])/g, (match: string, texContent: string): string => {
 			const trimmed = texContent.trim();
 			// Skip currency e.g. $50, $100.50
 			if (/^[\d,.]+(\s*(million|billion|thousand|k|m|usd|eur|gbp|inr))?$/i.test(trimmed)) {
@@ -987,7 +985,7 @@ class DocumentRenderer {
 
 	private replaceElementWithHtml(target: Element, htmlString: string): void {
 		const doc = new DOMParser().parseFromString(htmlString, 'text/html');
-		const frag = document.createDocumentFragment();
+		const frag = createFragment();
 		while (doc.body.firstChild) {
 			frag.appendChild(doc.body.firstChild);
 		}
@@ -1102,8 +1100,6 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 		const {containerEl} = this;
 
 		containerEl.empty();
-
-		new Setting(containerEl).setName('Copy document as HTML Settings').setHeading();
 
 		new Setting(containerEl).setName('Compatibility').setHeading();
 
@@ -1388,7 +1384,7 @@ class CopyDocumentAsHTMLSettingsTab extends PluginSettingTab {
 				});
 		});
 
-		new Setting(containerEl).setName('Exotic / Developer options').setHeading();
+		new Setting(containerEl).setName('Advanced').setHeading();
 
 		new Setting(containerEl)
 			.setName("Don't embed images")
@@ -1581,13 +1577,15 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on('editor-paste', (evt: ClipboardEvent, editor: Editor) => {
 				if (evt.defaultPrevented) return;
-				this.handleEditorPaste(evt, editor);
+				if (this.handleEditorPaste(evt, editor)) {
+					evt.preventDefault();
+				}
 			})
 		);
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, (await this.loadData() as Partial<CopyDocumentAsHTMLSettings>) || {});
 
 		// reload it so we may update it in a new release
 		if (!this.settings.useCustomStylesheet) {
@@ -1728,10 +1726,10 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 	/**
 	 * Automatically clean up math copied from ChatGPT, Claude, Wikipedia, etc. on Ctrl+V
 	 */
-	private handleEditorPaste(evt: ClipboardEvent, editor: Editor): void {
-		if (evt.defaultPrevented || !this.settings.cleanPastedMath) return;
+	private handleEditorPaste(evt: ClipboardEvent, editor: Editor): boolean {
+		if (evt.defaultPrevented || !this.settings.cleanPastedMath) return false;
 		const clipboardData = evt.clipboardData;
-		if (!clipboardData) return;
+		if (!clipboardData) return false;
 
 		const html = clipboardData.getData('text/html');
 		const plain = clipboardData.getData('text/plain');
@@ -1806,15 +1804,14 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 				let markdown = htmlToMarkdown(doc.body);
 
 				// Clean up LaTeX shorthand brackets \[...\] and \(...\) if any remain
-				markdown = markdown.replace(/\\\[([\s\S]*?)\\\]/g, (match, formula) => `\n\n$$${formula.trim()}$$\n\n`);
-				markdown = markdown.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => `$${formula.trim()}$`);
+				markdown = markdown.replace(/\\\[([\s\S]*?)\\\]/g, (match: string, formula: string): string => `\n\n$$${formula.trim()}$$\n\n`);
+				markdown = markdown.replace(/\\\(([\s\S]*?)\\\)/g, (match: string, formula: string): string => `$${formula.trim()}$`);
 
 				// Normalize excessive newlines around math blocks
 				markdown = markdown.replace(/\n{3,}/g, '\n\n');
 
-				evt.preventDefault();
 				editor.replaceSelection(markdown);
-				return;
+				return true;
 			} catch (err) {
 				console.error('Failed to parse pasted math from HTML:', err);
 			}
@@ -1822,11 +1819,13 @@ export default class CopyDocumentAsHTMLPlugin extends Plugin {
 
 		// Handle plain text with LaTeX shorthand brackets \[...\] or \(...\)
 		if (plain && (plain.includes('\\[') || plain.includes('\\('))) {
-			let cleaned = plain.replace(/\\\[([\s\S]*?)\\\]/g, (match, formula) => `\n\n$$${formula.trim()}$$\n\n`);
-			cleaned = cleaned.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => `$${formula.trim()}$`);
+			let cleaned = plain.replace(/\\\[([\s\S]*?)\\\]/g, (match: string, formula: string): string => `\n\n$$${formula.trim()}$$\n\n`);
+			cleaned = cleaned.replace(/\\\(([\s\S]*?)\\\)/g, (match: string, formula: string): string => `$${formula.trim()}$`);
 			cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-			evt.preventDefault();
 			editor.replaceSelection(cleaned);
+			return true;
 		}
+
+		return false;
 	}
 }

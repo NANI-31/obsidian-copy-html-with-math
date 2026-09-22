@@ -13721,7 +13721,6 @@ var DocumentRenderer = class {
     return result;
   }
   async loadComponents(view) {
-    const internalView = view;
     const loadChildren = async (component, visited = /* @__PURE__ */ new Set()) => {
       var _a, _b;
       if (visited.has(component)) {
@@ -13841,7 +13840,7 @@ var DocumentRenderer = class {
         case 0 /* CONVERT_TO_TEXT */:
         default:
           {
-            const textNode = createEl("span", { text: text2, cls: className });
+            const textNode = createSpan({ text: text2, cls: className });
             linkEl.replaceWith(textNode);
           }
           break;
@@ -13887,7 +13886,7 @@ var DocumentRenderer = class {
       const headColumn = headRow.createEl("td", { cls: "callout-title" });
       const title = calloutEl.querySelector(".callout-title-inner");
       if (title) {
-        const span = headColumn.createEl("span");
+        const span = headColumn.createSpan();
         while (title.firstChild) {
           span.appendChild(title.firstChild);
         }
@@ -13915,8 +13914,8 @@ var DocumentRenderer = class {
       if (text2 === "\u21A9\uFE0E") {
         link.parentNode.removeChild(link);
       } else {
-        const span = link.parentNode.createEl("span", { text: link.getText(), cls: "footnote-link" });
-        link.parentNode.replaceChild(span, link);
+        const span = createSpan({ text: text2, cls: "footnote-link" });
+        link.replaceWith(span);
       }
     });
   }
@@ -13956,7 +13955,7 @@ var DocumentRenderer = class {
       if (MERMAID_STYLESHEET && !svgAsString.includes("<style")) {
         svgAsString = svgAsString.replace(/<svg([^>]*)>/, `<svg$1><style>${MERMAID_STYLESHEET}</style>`);
       }
-      const svgData2 = `data:image/svg+xml;base64,` + Buffer.from(svgAsString).toString("base64");
+      const svgData2 = `data:image/svg+xml;base64,` + (0, import_obsidian.arrayBufferToBase64)(new TextEncoder().encode(svgAsString).buffer);
       const dataUri = await this.imageToDataUri(svgData2);
       const img = createEl("img");
       if (svg.getAttribute("style")) {
@@ -14078,7 +14077,7 @@ var DocumentRenderer = class {
   }
   replaceElementWithHtml(target, htmlString) {
     const doc = new DOMParser().parseFromString(htmlString, "text/html");
-    const frag = document.createDocumentFragment();
+    const frag = createFragment();
     while (doc.body.firstChild) {
       frag.appendChild(doc.body.firstChild);
     }
@@ -14169,7 +14168,6 @@ var CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSettingT
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian.Setting(containerEl).setName("Copy document as HTML Settings").setHeading();
     new import_obsidian.Setting(containerEl).setName("Compatibility").setHeading();
     new import_obsidian.Setting(containerEl).setName("Convert SVG files to bitmap").setDesc("If checked, SVG files are converted to bitmap. This makes the copied documents heavier but improves compatibility (eg. with gmail).").addToggle((toggle) => toggle.setValue(this.plugin.settings.convertSvgToBitmap).onChange(async (value) => {
       this.plugin.settings.convertSvgToBitmap = value;
@@ -14332,7 +14330,7 @@ var CopyDocumentAsHTMLSettingsTab = class extends import_obsidian.PluginSettingT
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian.Setting(containerEl).setName("Exotic / Developer options").setHeading();
+    new import_obsidian.Setting(containerEl).setName("Advanced").setHeading();
     new import_obsidian.Setting(containerEl).setName("Don't embed images").setDesc(createFragment((frag) => {
       frag.appendText("When this option is enabled, images will not be embedded in the HTML document, but ");
       frag.createEl("em", { text: "broken" });
@@ -14438,11 +14436,13 @@ var CopyDocumentAsHTMLPlugin = class extends import_obsidian.Plugin {
     this.registerEvent(this.app.workspace.on("editor-paste", (evt, editor) => {
       if (evt.defaultPrevented)
         return;
-      this.handleEditorPaste(evt, editor);
+      if (this.handleEditorPaste(evt, editor)) {
+        evt.preventDefault();
+      }
     }));
   }
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() || {});
     if (!this.settings.useCustomStylesheet) {
       this.settings.styleSheet = DEFAULT_STYLESHEET;
     }
@@ -14541,10 +14541,10 @@ pre { background-color: ${codeBg} !important; }
   }
   handleEditorPaste(evt, editor) {
     if (evt.defaultPrevented || !this.settings.cleanPastedMath)
-      return;
+      return false;
     const clipboardData = evt.clipboardData;
     if (!clipboardData)
-      return;
+      return false;
     const html = clipboardData.getData("text/html");
     const plain = clipboardData.getData("text/plain");
     const hasMath = Boolean(html && (html.includes("katex") || html.includes("math-mathml") || html.includes("<math") || html.includes("MathJax") || html.includes("mjx-container")));
@@ -14624,9 +14624,8 @@ $$${formula.trim()}$$
 `);
         markdown = markdown.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => `$${formula.trim()}$`);
         markdown = markdown.replace(/\n{3,}/g, "\n\n");
-        evt.preventDefault();
         editor.replaceSelection(markdown);
-        return;
+        return true;
       } catch (err) {
         console.error("Failed to parse pasted math from HTML:", err);
       }
@@ -14639,8 +14638,9 @@ $$${formula.trim()}$$
 `);
       cleaned = cleaned.replace(/\\\(([\s\S]*?)\\\)/g, (match, formula) => `$${formula.trim()}$`);
       cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
-      evt.preventDefault();
       editor.replaceSelection(cleaned);
+      return true;
     }
+    return false;
   }
 };

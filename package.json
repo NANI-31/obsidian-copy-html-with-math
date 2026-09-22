@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-copy-html-with-math",
-	"version": "1.0.4",
+	"version": "1.0.5",
 	"description": "Copy notes or selections to clipboard as HTML with math formulas rendered as MathML/KaTeX for Microsoft Word, Google Docs, Anki, and Web.",
 	"main": "main.js",
 	"scripts": {

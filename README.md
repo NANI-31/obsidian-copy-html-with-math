@@ -53,7 +53,7 @@ This plugin intercepts `Ctrl + V` and automatically:
 
 You can trigger these commands from the Command Palette (`Ctrl + P` / `Cmd + P`) or assign custom hotkeys:
 
-| Command | Suggested Hotkey | Description |
+| Command | Suggested Hotkey | Action Details |
 |---|---|---|
 | **Copy selection or document to clipboard** | `Ctrl + Shift + C` | Copies selection with rendered math; if nothing is selected, copies the whole note. |
 | **Copy entire document to clipboard** | — | Copies the entire note as rich HTML with math. |
@@ -92,8 +92,8 @@ Search for **Copy as HTML with Math** in Obsidian's in-app Community Plugins bro
 4. BRAT will automatically download the plugin and keep it up to date!
 
 ### Method 3: Manual Installation
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [Latest Release](https://github.com/NANI-31/obsidian-copy-html-with-math/releases).
-2. Create a folder in your vault: `<Vault>/.obsidian/plugins/copy-html-with-math/`.
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [Releases](https://github.com/NANI-31/obsidian-copy-html-with-math/releases) page.
+2. Create a folder in your vault: `your-vault/.obsidian/plugins/copy-html-with-math/`.
 3. Copy the 3 files into that folder.
 4. In Obsidian, go to **Settings** → **Community Plugins**, reload, and enable **Copy as HTML with Math**.
 
